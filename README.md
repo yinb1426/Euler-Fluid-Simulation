@@ -25,9 +25,9 @@
 3. 建议使用平面GO进行实验，将FluidMaterial.mat材质和FluidSimulator.cs脚本挂载到平面GO上，并设置好参数，即可在运行时Game模式下查看实现效果。或者直接打开提供的测试场景Fluid Scene进行实验。
 ## 实现效果
 1. 叠加扩散效果
-![DyeDiffusion]()
+![DyeDiffusion](https://github.com/yinb1426/Euler-Fluid-Simulation/blob/main/Pictures/DyeDiffusion.png)
 2. FlowMap扭曲效果
-![FlowMapDistortion]()
+![FlowMapDistortion](https://github.com/yinb1426/Euler-Fluid-Simulation/blob/main/Pictures/FlowMapDistortion.png)
 ## 参考
 * https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu
 * https://forum.taichi-lang.cn/t/topic/4061
