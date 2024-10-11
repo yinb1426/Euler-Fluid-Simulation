@@ -1,0 +1,158 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel AdvectionVelocity
+#pragma kernel AdvectionDye
+#pragma kernel ViscosityDiffusion
+#pragma kernel ApplyForce
+#pragma kernel Divergence
+#pragma kernel PressureJacobi
+#pragma kernel SubtractGradient
+
+RWTexture2D<float4> dye;
+RWTexture2D<float4> newDye;
+RWTexture2D<float2> velocity;
+RWTexture2D<float2> newVelocity;
+RWTexture2D<float> pressure;
+RWTexture2D<float> newPressure;
+RWTexture2D<float> divergence;
+
+int textureResolution;
+float deltaT;
+float velocityDiffusion, densityDiffusion;
+float2 mousePos, mouseDir;
+float4 mouseColor;
+float radius;
+float momentumStrength;
+float viscosity;
+
+uint2 Sampler(uint2 uv)
+{
+    uint u = max(0, min(textureResolution - 1, uv.x));
+    uint v = max(0, min(textureResolution - 1, uv.y));
+    return uint2(u, v);
+}
+
+float2 Bilerp(RWTexture2D<float2> t, float u, float v)
+{
+    int iu = int(floor(u - 0.5));
+    int iv = int(floor(v - 0.5));
+    float fu = u - 0.5 - floor(u - 0.5);
+    float fv = v - 0.5 - floor(v - 0.5);
+    float2 a = t[uint2(iu, iv)];
+    float2 b = t[uint2(iu + 1, iv)];
+    float2 c = t[uint2(iu, iv + 1)];
+    float2 d = t[uint2(iu + 1, iv + 1)];
+    return lerp(lerp(a, b, fu), lerp(c, d, fu), fv);
+}
+
+float4 Bilerp(RWTexture2D<float4> t, float u, float v)
+{
+    int iu = int(floor(u - 0.5));
+    int iv = int(floor(v - 0.5));
+    float fu = u - 0.5 - floor(u - 0.5);
+    float fv = v - 0.5 - floor(v - 0.5);
+    float4 a = t[uint2(iu, iv)];
+    float4 b = t[uint2(iu + 1, iv)];
+    float4 c = t[uint2(iu, iv + 1)];
+    float4 d = t[uint2(iu + 1, iv + 1)];
+    return lerp(lerp(a, b, fu), lerp(c, d, fu), fv);
+}
+
+[numthreads(32,16,1)]
+void AdvectionVelocity(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float2 pos = id.xy + 0.5;
+    pos = pos - deltaT * Bilerp(velocity, pos.x, pos.y);
+    float decay = 1.0 + deltaT * velocityDiffusion;
+    newVelocity[id.xy] = Bilerp(velocity, pos.x, pos.y) / decay;
+}
+
+[numthreads(32,16,1)]
+void AdvectionDye(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float2 pos = id.xy + 0.5;
+    pos = pos - deltaT * Bilerp(velocity, pos.x, pos.y);
+    float decay = 1.0 + deltaT * densityDiffusion;
+    newDye[id.xy] = Bilerp(dye, pos.x, pos.y) / decay;
+}
+
+[numthreads(32,16,1)]
+void ViscosityDiffusion(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float2 vL = velocity[int2(id.x - 1, id.y)];
+    float2 vR = velocity[int2(id.x + 1, id.y)];
+    float2 vT = velocity[int2(id.x, id.y + 1)];
+    float2 vB = velocity[int2(id.x, id.y - 1)];
+    float2 bC = velocity[id.xy];
+    float alpha = 1.0 / (viscosity * deltaT);
+    float beta = 4.0 + alpha;
+    newVelocity[id.xy] = (vL + vR + vB + vT + alpha * bC) / beta;
+}
+
+[numthreads(32,16,1)]
+void ApplyForce(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float dx = id.x - mousePos.x;
+    float dy = id.y - mousePos.y;
+    float d2 = dx * dx + dy * dy;
+    float factor = exp(-d2 / radius);
+    float2 momentum = (mouseDir * 10000.0 * momentumStrength * factor) * deltaT;
+    velocity[id.xy] += momentum;
+    float4 splat = mouseColor;
+    float4 dc = dye[id.xy];
+    if (length(mouseDir) > 0.3)
+        dye[id.xy] = dc + splat * factor * 0.5;
+}
+
+[numthreads(32,16,1)]
+void Divergence(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float vL = velocity[uint2(id.x - 1, id.y)].x;
+    float vR = velocity[uint2(id.x + 1, id.y)].x;
+    float vT = velocity[uint2(id.x, id.y + 1)].y;
+    float vB = velocity[uint2(id.x, id.y - 1)].y;
+    float2 vC = velocity[id.xy];
+    if (id.x == 0)
+        vL = -vC.x;
+    if (id.x == textureResolution - 1)
+        vR = -vC.x;
+    if (id.y == 0)
+        vB = -vC.y;
+    if (id.y == textureResolution - 1)
+        vT = -vC.y;
+    divergence[id.xy] = (vR - vL + vT - vB) * 0.5;
+}
+
+[numthreads(32,16,1)]
+void PressureJacobi(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float pL = pressure[uint2(id.x - 1, id.y)];
+    float pR = pressure[uint2(id.x + 1, id.y)];
+    float pT = pressure[uint2(id.x, id.y + 1)];
+    float pB = pressure[uint2(id.x, id.y - 1)];
+    float div = divergence[id.xy];
+    newPressure[id.xy] = (pL + pR + pB + pT - div) * 0.25;
+}
+
+[numthreads(32,16,1)]
+void SubtractGradient(uint3 id : SV_DispatchThreadID)
+{
+    if (!(id.x < textureResolution && id.y < textureResolution))
+        return;
+    float pL = pressure[uint2(id.x - 1, id.y)];
+    float pR = pressure[uint2(id.x + 1, id.y)];
+    float pT = pressure[uint2(id.x, id.y + 1)];
+    float pB = pressure[uint2(id.x, id.y - 1)];
+    velocity[id.xy] -= float2(pR - pL, pT - pB) * 0.5;
+}
